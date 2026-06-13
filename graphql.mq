@@ -15,12 +15,12 @@ end
 
 def _gql_parse_type_ref(s):
   let t = trim(s)
-  | if (ends_with(t, "!")):
-      {"type": slice(t, 0, len(t) - 1), "required": true, "list": false}
+  | if (starts_with(t, "[") && ends_with(t, "]!")):
+      {"type": slice(t, 1, len(t) - 2), "required": true, "list": true}
     elif (starts_with(t, "[") && ends_with(t, "]")):
       {"type": slice(t, 1, len(t) - 1), "required": false, "list": true}
-    elif (starts_with(t, "[") && ends_with(t, "]!")):
-      {"type": slice(t, 1, len(t) - 2), "required": true, "list": true}
+    elif (ends_with(t, "!")):
+      {"type": slice(t, 0, len(t) - 1), "required": true, "list": false}
     else:
       {"type": t, "required": false, "list": false}
 end
