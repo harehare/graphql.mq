@@ -85,10 +85,6 @@ mq -I raw 'import "graphql" | graphql::graphql_find_type(., "Role") | ."values"'
 mq -I raw 'import "graphql" | graphql::graphql_parse(.) | filter(fn(t): t["kind"] == "type";) | map(fn(t): {"type": t["name"], "lists": map(filter(t["fields"], fn(f): f["type"]["list"];), fn(f): f["name"];)};)' schema.graphql
 ```
 
-## Compatibility
-
-Requires [mq](https://github.com/harehare/mq) v0.5 or later.
-
 ## License
 
 MIT

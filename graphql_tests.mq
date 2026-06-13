@@ -167,3 +167,336 @@ def test_comments_stripped():
   | assert_not_empty(fields)
   | assert_eq(first(fields)["name"], "bar")
 end
+
+# -- union parsing (fixed) --
+
+def test_parse_finds_union():
+  let result = graphql_parse(_schema())
+  | let unions = filter(result, fn(t): t["kind"] == "union";)
+  | assert_not_empty(unions)
+end
+
+def test_parse_union_members():
+  let t = graphql_find_type(_schema(), "SearchResult")
+  | assert_not_none(t)
+  | assert_eq(t["kind"], "union")
+  | assert_contains(t["members"], "User")
+  | assert_contains(t["members"], "Post")
+end
+
+# -- _gql_stringify_type_ref --
+
+def test_stringify_type_ref_simple():
+  let tr = {"type": "String", "required": false, "list": false}
+  | assert_eq(_gql_stringify_type_ref(tr), "String")
+end
+
+def test_stringify_type_ref_required():
+  let tr = {"type": "String", "required": true, "list": false}
+  | assert_eq(_gql_stringify_type_ref(tr), "String!")
+end
+
+def test_stringify_type_ref_list():
+  let tr = {"type": "String", "required": false, "list": true}
+  | assert_eq(_gql_stringify_type_ref(tr), "[String]")
+end
+
+def test_stringify_type_ref_required_list():
+  let tr = {"type": "Post!", "required": true, "list": true}
+  | assert_eq(_gql_stringify_type_ref(tr), "[Post!]!")
+end
+
+def test_stringify_type_ref_list_optional():
+  let tr = {"type": "String", "required": false, "list": true}
+  | assert_eq(_gql_stringify_type_ref(tr), "[String]")
+end
+
+# -- graphql_stringify: scalar --
+
+def test_stringify_scalar():
+  let d = {"kind": "scalar", "name": "DateTime"}
+  | let result = graphql_stringify([d])
+  | assert_eq(result, "scalar DateTime")
+end
+
+# -- graphql_stringify: enum --
+
+def test_stringify_enum_contains_keyword():
+  let d = {"kind": "enum", "name": "Role", "values": ["ADMIN", "EDITOR", "VIEWER"]}
+  | let result = graphql_stringify([d])
+  | assert_true(is_regex_match(result, "enum Role"))
+end
+
+def test_stringify_enum_contains_values():
+  let d = {"kind": "enum", "name": "Role", "values": ["ADMIN", "EDITOR", "VIEWER"]}
+  | let result = graphql_stringify([d])
+  | assert_true(is_regex_match(result, "ADMIN"))
+  | assert_true(is_regex_match(result, "EDITOR"))
+  | assert_true(is_regex_match(result, "VIEWER"))
+end
+
+def test_stringify_enum_single_value():
+  let d = {"kind": "enum", "name": "Status", "values": ["ACTIVE"]}
+  | let result = graphql_stringify([d])
+  | assert_true(is_regex_match(result, "enum Status"))
+  | assert_true(is_regex_match(result, "ACTIVE"))
+end
+
+# -- graphql_stringify: union --
+
+def test_stringify_union():
+  let d = {"kind": "union", "name": "SearchResult", "members": ["User", "Post"]}
+  | let result = graphql_stringify([d])
+  | assert_eq(result, "union SearchResult = User | Post")
+end
+
+def test_stringify_union_three_members():
+  let d = {"kind": "union", "name": "Animal", "members": ["Cat", "Dog", "Bird"]}
+  | let result = graphql_stringify([d])
+  | assert_eq(result, "union Animal = Cat | Dog | Bird")
+end
+
+# -- graphql_stringify: type with fields --
+
+def test_stringify_type_basic():
+  let f = {"name": "id", "type": {"type": "ID", "required": true, "list": false}, "args": []}
+  | let d = {"kind": "type", "name": "User", "fields": [f], "interfaces": []}
+  | let result = graphql_stringify([d])
+  | assert_true(is_regex_match(result, "type User"))
+  | assert_true(is_regex_match(result, "id: ID!"))
+end
+
+def test_stringify_type_optional_field():
+  let f = {"name": "email", "type": {"type": "String", "required": false, "list": false}, "args": []}
+  | let d = {"kind": "type", "name": "User", "fields": [f], "interfaces": []}
+  | let result = graphql_stringify([d])
+  | assert_true(is_regex_match(result, "email: String"))
+end
+
+def test_stringify_type_list_field():
+  let f = {"name": "tags", "type": {"type": "String", "required": false, "list": true}, "args": []}
+  | let d = {"kind": "type", "name": "Post", "fields": [f], "interfaces": []}
+  | let result = graphql_stringify([d])
+  | assert_true(is_regex_match(result, "tags: \\[String\\]"))
+end
+
+def test_stringify_type_required_list_field():
+  let f = {"name": "posts", "type": {"type": "Post!", "required": true, "list": true}, "args": []}
+  | let d = {"kind": "type", "name": "User", "fields": [f], "interfaces": []}
+  | let result = graphql_stringify([d])
+  | assert_true(is_regex_match(result, "posts: \\[Post!\\]!"))
+end
+
+def test_stringify_type_multiple_fields():
+  let f1 = {"name": "id", "type": {"type": "ID", "required": true, "list": false}, "args": []}
+  | let f2 = {"name": "name", "type": {"type": "String", "required": true, "list": false}, "args": []}
+  | let d = {"kind": "type", "name": "User", "fields": [f1, f2], "interfaces": []}
+  | let result = graphql_stringify([d])
+  | assert_true(is_regex_match(result, "id: ID!"))
+  | assert_true(is_regex_match(result, "name: String!"))
+end
+
+# -- graphql_stringify: type with arguments --
+
+def test_stringify_type_with_single_arg():
+  let arg = {"name": "id", "type": {"type": "ID", "required": true, "list": false}}
+  | let f = {"name": "user", "type": {"type": "User", "required": false, "list": false}, "args": [arg]}
+  | let d = {"kind": "type", "name": "Query", "fields": [f], "interfaces": []}
+  | let result = graphql_stringify([d])
+  | assert_true(is_regex_match(result, "user\\(id: ID!\\): User"))
+end
+
+def test_stringify_type_with_multiple_args():
+  let a1 = {"name": "limit", "type": {"type": "Int", "required": false, "list": false}}
+  | let a2 = {"name": "offset", "type": {"type": "Int", "required": false, "list": false}}
+  | let f = {"name": "posts", "type": {"type": "Post", "required": true, "list": true}, "args": [a1, a2]}
+  | let d = {"kind": "type", "name": "Query", "fields": [f], "interfaces": []}
+  | let result = graphql_stringify([d])
+  | assert_true(is_regex_match(result, "limit: Int"))
+  | assert_true(is_regex_match(result, "offset: Int"))
+end
+
+# -- graphql_stringify: interface --
+
+def test_stringify_interface():
+  let f = {"name": "id", "type": {"type": "ID", "required": true, "list": false}, "args": []}
+  | let d = {"kind": "interface", "name": "Node", "fields": [f], "interfaces": []}
+  | let result = graphql_stringify([d])
+  | assert_true(is_regex_match(result, "interface Node"))
+  | assert_true(is_regex_match(result, "id: ID!"))
+end
+
+# -- graphql_stringify: input --
+
+def test_stringify_input():
+  let f1 = {"name": "name", "type": {"type": "String", "required": true, "list": false}, "args": []}
+  | let f2 = {"name": "email", "type": {"type": "String", "required": true, "list": false}, "args": []}
+  | let d = {"kind": "input", "name": "CreateUserInput", "fields": [f1, f2], "interfaces": []}
+  | let result = graphql_stringify([d])
+  | assert_true(is_regex_match(result, "input CreateUserInput"))
+  | assert_true(is_regex_match(result, "name: String!"))
+  | assert_true(is_regex_match(result, "email: String!"))
+end
+
+# -- graphql_stringify: implements --
+
+def test_stringify_type_with_one_interface():
+  let f = {"name": "id", "type": {"type": "ID", "required": true, "list": false}, "args": []}
+  | let d = {"kind": "type", "name": "User", "fields": [f], "interfaces": ["Node"]}
+  | let result = graphql_stringify([d])
+  | assert_true(is_regex_match(result, "type User implements Node"))
+end
+
+def test_stringify_type_with_two_interfaces():
+  let f = {"name": "id", "type": {"type": "ID", "required": true, "list": false}, "args": []}
+  | let d = {"kind": "type", "name": "User", "fields": [f], "interfaces": ["Node", "Entity"]}
+  | let result = graphql_stringify([d])
+  | assert_true(is_regex_match(result, "type User implements Node & Entity"))
+end
+
+# -- graphql_stringify: multiple definitions --
+
+def test_stringify_multiple_defs_scalar_and_enum():
+  let scalar = {"kind": "scalar", "name": "DateTime"}
+  | let enum_def = {"kind": "enum", "name": "Role", "values": ["ADMIN"]}
+  | let result = graphql_stringify([scalar, enum_def])
+  | assert_true(is_regex_match(result, "scalar DateTime"))
+  | assert_true(is_regex_match(result, "enum Role"))
+end
+
+def test_stringify_multiple_defs_separated_by_blank_line():
+  let s1 = {"kind": "scalar", "name": "Date"}
+  | let s2 = {"kind": "scalar", "name": "Time"}
+  | let result = graphql_stringify([s1, s2])
+  | assert_true(is_regex_match(result, "scalar Date"))
+  | assert_true(is_regex_match(result, "scalar Time"))
+end
+
+def test_stringify_empty_defs():
+  let result = graphql_stringify([])
+  | assert_eq(result, "")
+end
+
+# -- round-trip tests --
+
+def test_roundtrip_type_names():
+  let defs = graphql_parse(_schema())
+  | let stringified = graphql_stringify(defs)
+  | let re_parsed = graphql_parse(stringified)
+  | let names = map(re_parsed, fn(t): t["name"];)
+  | assert_contains(names, "User")
+  | assert_contains(names, "Post")
+  | assert_contains(names, "Query")
+  | assert_contains(names, "Role")
+  | assert_contains(names, "Node")
+  | assert_contains(names, "DateTime")
+end
+
+def test_roundtrip_type_kinds():
+  let defs = graphql_parse(_schema())
+  | let stringified = graphql_stringify(defs)
+  | let re_parsed = graphql_parse(stringified)
+  | let kinds = map(re_parsed, fn(t): t["kind"];)
+  | assert_contains(kinds, "type")
+  | assert_contains(kinds, "enum")
+  | assert_contains(kinds, "interface")
+  | assert_contains(kinds, "scalar")
+end
+
+def test_roundtrip_user_field_names():
+  let defs = graphql_parse(_schema())
+  | let stringified = graphql_stringify(defs)
+  | let fields = graphql_fields(stringified, "User")
+  | let names = map(fields, fn(f): f["name"];)
+  | assert_contains(names, "id")
+  | assert_contains(names, "name")
+  | assert_contains(names, "email")
+  | assert_contains(names, "posts")
+end
+
+def test_roundtrip_field_required():
+  let defs = graphql_parse(_schema())
+  | let stringified = graphql_stringify(defs)
+  | let fields = graphql_fields(stringified, "User")
+  | let id_field = first(filter(fields, fn(f): f["name"] == "id";))
+  | assert_true(id_field["type"]["required"])
+end
+
+def test_roundtrip_field_optional():
+  let defs = graphql_parse(_schema())
+  | let stringified = graphql_stringify(defs)
+  | let fields = graphql_fields(stringified, "User")
+  | let email_field = first(filter(fields, fn(f): f["name"] == "email";))
+  | assert_false(email_field["type"]["required"])
+end
+
+def test_roundtrip_field_list():
+  let defs = graphql_parse(_schema())
+  | let stringified = graphql_stringify(defs)
+  | let fields = graphql_fields(stringified, "User")
+  | let posts_field = first(filter(fields, fn(f): f["name"] == "posts";))
+  | assert_true(posts_field["type"]["list"])
+end
+
+def test_roundtrip_field_not_list():
+  let defs = graphql_parse(_schema())
+  | let stringified = graphql_stringify(defs)
+  | let fields = graphql_fields(stringified, "User")
+  | let id_field = first(filter(fields, fn(f): f["name"] == "id";))
+  | assert_false(id_field["type"]["list"])
+end
+
+def test_roundtrip_field_type_name():
+  let defs = graphql_parse(_schema())
+  | let stringified = graphql_stringify(defs)
+  | let fields = graphql_fields(stringified, "User")
+  | let name_field = first(filter(fields, fn(f): f["name"] == "name";))
+  | assert_eq(name_field["type"]["type"], "String")
+end
+
+def test_roundtrip_enum_values():
+  let defs = graphql_parse(_schema())
+  | let stringified = graphql_stringify(defs)
+  | let role = graphql_find_type(stringified, "Role")
+  | assert_contains(role["values"], "ADMIN")
+  | assert_contains(role["values"], "EDITOR")
+  | assert_contains(role["values"], "VIEWER")
+end
+
+def test_roundtrip_query_args():
+  let defs = graphql_parse(_schema())
+  | let stringified = graphql_stringify(defs)
+  | let fields = graphql_fields(stringified, "Query")
+  | let user_field = first(filter(fields, fn(f): f["name"] == "user";))
+  | assert_not_empty(user_field["args"])
+end
+
+def test_roundtrip_union_members():
+  let defs = graphql_parse(_schema())
+  | let stringified = graphql_stringify(defs)
+  | let t = graphql_find_type(stringified, "SearchResult")
+  | assert_not_none(t)
+  | assert_contains(t["members"], "User")
+  | assert_contains(t["members"], "Post")
+end
+
+def test_roundtrip_interface_kind():
+  let defs = graphql_parse(_schema())
+  | let stringified = graphql_stringify(defs)
+  | let t = graphql_find_type(stringified, "Node")
+  | assert_eq(t["kind"], "interface")
+end
+
+def test_roundtrip_input_kind():
+  let defs = graphql_parse(_schema())
+  | let stringified = graphql_stringify(defs)
+  | let t = graphql_find_type(stringified, "CreateUserInput")
+  | assert_eq(t["kind"], "input")
+end
+
+def test_roundtrip_scalar_kind():
+  let defs = graphql_parse(_schema())
+  | let stringified = graphql_stringify(defs)
+  | let t = graphql_find_type(stringified, "DateTime")
+  | assert_eq(t["kind"], "scalar")
+end

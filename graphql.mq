@@ -2,14 +2,11 @@
 # Parses SDL (Schema Definition Language): types, enums, interfaces, inputs, unions, scalars
 # https://spec.graphql.org/
 
-# ─── internal ─────────────────────────────────────────────────────────────────
-
 def _gql_strip_comments(s):
   let lines = split(s, "\n")
   | map(lines, fn(l):
-      let m = capture(l, "^(?P<code>[^\"#]*)(?:#.*)?$")
-      | if (is_none(m["code"])): l else: trim(m["code"])
-    ;)
+    let m = capture(l, "^(?P<code>[^\"#]*)(?:#.*)?$")
+    | if (is_none(m["code"])): l else: trim(m["code"]);)
   | join("\n")
 end
 
@@ -34,18 +31,17 @@ def _gql_parse_field(line):
       do
         let type_ref = _gql_parse_type_ref(m["type"])
         | let args = if (is_none(m["args"]) || len(trim(m["args"])) <= 2):
-              []
-            else:
-              do
-                let inner = slice(trim(m["args"]), 1, len(trim(m["args"])) - 1)
-                | let arg_parts = split(inner, ",\\s*")
-                | map(arg_parts, fn(a):
-                    let am = capture(trim(a), "^(?P<n>[A-Za-z_][A-Za-z0-9_]*):\\s*(?P<t>[A-Za-z_\\[\\]!]+)")
-                    | if (is_none(am["n"])): None
-                      else: {"name": am["n"], "type": _gql_parse_type_ref(am["t"])}
-                  ;)
-                | filter(fn(a): not(is_none(a));)
-              end
+                  []
+                else:
+                  do
+                    let inner = slice(trim(m["args"]), 1, len(trim(m["args"])) - 1)
+                    | let arg_parts = split(inner, ",\\s*")
+                    | map(arg_parts, fn(a):
+                      let am = capture(trim(a), "^(?P<n>[A-Za-z_][A-Za-z0-9_]*):\\s*(?P<t>[A-Za-z_\\[\\]!]+)")
+                      | if (is_none(am["n"])): None
+                        else: {"name": am["n"], "type": _gql_parse_type_ref(am["t"])};)
+                    | filter(fn(a): not(is_none(a));)
+                  end
         | {"name": m["name"], "type": type_ref, "args": args}
       end
 end
@@ -67,9 +63,9 @@ def _gql_parse_type_def(block, kind):
         | let field_lines = filter(split(body, "\n"), fn(l): len(trim(l)) > 0;)
         | let fields = filter(map(field_lines, fn(l): _gql_parse_field(l);), fn(f): not(is_none(f));)
         | let ifaces = if (is_none(m["ifaces"]) || len(trim(m["ifaces"])) == 0):
-              []
-            else:
-              filter(map(split(trim(m["ifaces"]), "&\\s*"), fn(i): trim(i);), fn(i): len(i) > 0;)
+                  []
+                else:
+                  filter(map(split(trim(m["ifaces"]), "&\\s*"), fn(i): trim(i);), fn(i): len(i) > 0;)
         | {"kind": kind, "name": name_, "fields": fields, "interfaces": ifaces}
       end
 end
@@ -82,8 +78,7 @@ def _gql_parse_enum_def(block):
       do
         let values = filter(
           map(split(m["body"], "\n"), fn(l): trim(l);),
-          fn(v): len(v) > 0 && is_regex_match(v, "^[A-Za-z_][A-Za-z0-9_]*$")
-        ;)
+          fn(v): len(v) > 0 && is_regex_match(v, "^[A-Za-z_][A-Za-z0-9_]*$");)
         | {"kind": "enum", "name": trim(m["name"]), "values": values}
       end
 end
@@ -104,30 +99,104 @@ def _gql_find_defs(s, keyword, parser):
   | let raw_matches = regex_match(s, pattern)
   | let defs = map(raw_matches, fn(blk):
       let inner = trim(replace(blk, keyword + " ", ""))
-      | parser(inner)
-    ;)
+      | parser(inner);)
   | filter(defs, fn(d): not(is_none(d));)
 end
 
 def _gql_find_scalars(s):
   let matches = regex_match(s, "scalar\\s+[A-Za-z_][A-Za-z0-9_]*")
   | map(matches, fn(m_):
-      let name_ = trim(replace(m_, "scalar ", ""))
-      | {"kind": "scalar", "name": name_}
-    ;)
+    let name_ = trim(replace(m_, "scalar ", ""))
+    | {"kind": "scalar", "name": name_};)
 end
 
-# ─── public API ───────────────────────────────────────────────────────────────
+def _gql_find_unions(s):
+  let matches = regex_match(s, "union\\s+[A-Za-z_][A-Za-z0-9_]*\\s*=\\s*[A-Za-z_0-9 |]+")
+  | map(matches, fn(m_):
+    let inner = trim(replace(m_, "union ", ""))
+    | _gql_parse_union_def(inner);)
+end
+
+def _gql_stringify_type_ref(tr):
+  let base = if (tr["list"]): "[" + tr["type"] + "]" else: tr["type"]
+  | if (tr["required"]): base + "!" else: base
+end
+
+def _gql_stringify_arg(arg):
+  arg["name"] + ": " + _gql_stringify_type_ref(arg["type"])
+end
+
+def _gql_join_args(args):
+  map(args, fn(a): _gql_stringify_arg(a);) | join(", ")
+end
+
+def _gql_stringify_field(f):
+  let args_str = if (len(f["args"]) == 0):
+    ""
+  else:
+    "(" + _gql_join_args(f["args"]) + ")"
+  | "  " + f["name"] + args_str + ": " + _gql_stringify_type_ref(f["type"])
+end
+
+def _gql_join_fields(fields):
+  map(fields, fn(f): _gql_stringify_field(f);) | join("\n")
+end
+
+def _gql_join_interfaces(ifaces):
+  map(ifaces, fn(i): i;) | join(" & ")
+end
+
+def _gql_stringify_type_def(d):
+  let iface_str = if (len(d["interfaces"]) == 0):
+    ""
+  else:
+    " implements " + _gql_join_interfaces(d["interfaces"])
+  | let header = d["kind"] + " " + d["name"] + iface_str
+  | let body = _gql_join_fields(d["fields"])
+  | header + " {\n" + body + "\n}"
+end
+
+def _gql_stringify_enum_def(d):
+  let body = _gql_join_enum_values(d["values"])
+  | "enum " + d["name"] + " {\n" + body + "\n}"
+end
+
+def _gql_join_enum_values(values):
+  map(values, fn(v): "  " + v;) | join("\n")
+end
+
+def _gql_join_union_members(members):
+  map(members, fn(m_): m_;) | join(" | ")
+end
+
+def _gql_stringify_union_def(d):
+  "union " + d["name"] + " = " + _gql_join_union_members(d["members"])
+end
+
+def _gql_stringify_scalar_def(d):
+  "scalar " + d["name"]
+end
+
+def _gql_stringify_def(d):
+  if (d["kind"] == "enum"):
+    _gql_stringify_enum_def(d)
+  elif (d["kind"] == "union"):
+    _gql_stringify_union_def(d)
+  elif (d["kind"] == "scalar"):
+    _gql_stringify_scalar_def(d)
+  else:
+    _gql_stringify_type_def(d)
+end
 
 # Parses a GraphQL SDL string and returns an array of type definitions.
 def graphql_parse(input):
   let s = _gql_strip_comments(to_string(input))
-  | let types      = _gql_find_defs(s, "type",      fn(b): _gql_parse_type_def(b, "type");)
+  | let types = _gql_find_defs(s, "type", fn(b): _gql_parse_type_def(b, "type");)
   | let interfaces = _gql_find_defs(s, "interface", fn(b): _gql_parse_type_def(b, "interface");)
-  | let inputs     = _gql_find_defs(s, "input",     fn(b): _gql_parse_type_def(b, "input");)
-  | let enums      = _gql_find_defs(s, "enum",      fn(b): _gql_parse_enum_def(b);)
-  | let unions     = _gql_find_defs(s, "union",     fn(b): _gql_parse_union_def(b);)
-  | let scalars    = _gql_find_scalars(s)
+  | let inputs = _gql_find_defs(s, "input", fn(b): _gql_parse_type_def(b, "input");)
+  | let enums = _gql_find_defs(s, "enum", fn(b): _gql_parse_enum_def(b);)
+  | let unions = _gql_find_unions(s)
+  | let scalars = _gql_find_scalars(s)
   | types + interfaces + inputs + enums + unions + scalars
 end
 
@@ -145,4 +214,15 @@ end
 def graphql_fields(input, type_name):
   let t = graphql_find_type(input, type_name)
   | if (is_none(t)): [] else: t["fields"]
+end
+
+# Converts an array of parsed GraphQL definitions back to SDL string.
+def graphql_stringify(defs):
+  let parts = filter(map(defs, fn(d): _gql_stringify_def(d);), fn(s): len(s) > 0;)
+  | parts | join("\n\n")
+end
+# Converts an array of parsed GraphQL definitions back to SDL string.
+def graphql_stringify(defs):
+  let parts = filter(map(defs, fn(d): _gql_stringify_def(d);), fn(s): len(s) > 0;)
+  | parts | join("\n\n")
 end
