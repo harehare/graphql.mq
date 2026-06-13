@@ -1,0 +1,169 @@
+include "test"
+| include "graphql"
+|
+
+def _schema():
+  "type User {\n  id: ID!\n  name: String!\n  email: String\n  posts: [Post!]!\n}\n\ntype Post {\n  id: ID!\n  title: String!\n  author: User!\n  tags: [String]\n}\n\ntype Query {\n  user(id: ID!): User\n  posts(limit: Int, offset: Int): [Post!]!\n}\n\nenum Role {\n  ADMIN\n  EDITOR\n  VIEWER\n}\n\ninterface Node {\n  id: ID!\n}\n\ninput CreateUserInput {\n  name: String!\n  email: String!\n}\n\nunion SearchResult = User | Post\n\nscalar DateTime"
+end
+
+# -- graphql_parse: count definitions --
+
+def test_parse_returns_array():
+  let result = graphql_parse(_schema())
+  | assert_not_empty(result)
+end
+
+def test_parse_finds_types():
+  let result = graphql_parse(_schema())
+  | let types = filter(result, fn(t): t["kind"] == "type";)
+  | assert_not_empty(types)
+end
+
+def test_parse_finds_enum():
+  let result = graphql_parse(_schema())
+  | let enums = filter(result, fn(t): t["kind"] == "enum";)
+  | assert_not_empty(enums)
+end
+
+def test_parse_finds_interface():
+  let result = graphql_parse(_schema())
+  | let ifaces = filter(result, fn(t): t["kind"] == "interface";)
+  | assert_not_empty(ifaces)
+end
+
+def test_parse_finds_input():
+  let result = graphql_parse(_schema())
+  | let inputs = filter(result, fn(t): t["kind"] == "input";)
+  | assert_not_empty(inputs)
+end
+
+def test_parse_finds_scalar():
+  let result = graphql_parse(_schema())
+  | let scalars = filter(result, fn(t): t["kind"] == "scalar";)
+  | assert_not_empty(scalars)
+end
+
+# -- graphql_type_names --
+
+def test_type_names_contains_user():
+  let names = graphql_type_names(_schema())
+  | assert_contains(names, "User")
+end
+
+def test_type_names_contains_post():
+  let names = graphql_type_names(_schema())
+  | assert_contains(names, "Post")
+end
+
+def test_type_names_contains_query():
+  let names = graphql_type_names(_schema())
+  | assert_contains(names, "Query")
+end
+
+def test_type_names_contains_role():
+  let names = graphql_type_names(_schema())
+  | assert_contains(names, "Role")
+end
+
+def test_type_names_contains_scalar():
+  let names = graphql_type_names(_schema())
+  | assert_contains(names, "DateTime")
+end
+
+# -- graphql_find_type --
+
+def test_find_type_user():
+  let t = graphql_find_type(_schema(), "User")
+  | assert_not_none(t)
+  | assert_eq(t["name"], "User")
+end
+
+def test_find_type_not_found():
+  let t = graphql_find_type(_schema(), "NonExistent")
+  | assert_none(t)
+end
+
+def test_find_enum_role():
+  let t = graphql_find_type(_schema(), "Role")
+  | assert_eq(t["kind"], "enum")
+  | assert_contains(t["values"], "ADMIN")
+  | assert_contains(t["values"], "EDITOR")
+  | assert_contains(t["values"], "VIEWER")
+end
+
+def test_find_scalar():
+  let t = graphql_find_type(_schema(), "DateTime")
+  | assert_eq(t["kind"], "scalar")
+end
+
+# -- graphql_fields --
+
+def test_fields_user():
+  let fields = graphql_fields(_schema(), "User")
+  | assert_not_empty(fields)
+  | let names = map(fields, fn(f): f["name"];)
+  | assert_contains(names, "id")
+  | assert_contains(names, "name")
+  | assert_contains(names, "email")
+  | assert_contains(names, "posts")
+end
+
+def test_fields_empty_for_unknown_type():
+  let fields = graphql_fields(_schema(), "Unknown")
+  | assert_empty(fields)
+end
+
+# -- field type references --
+
+def test_field_required():
+  let fields = graphql_fields(_schema(), "User")
+  | let id_field = first(filter(fields, fn(f): f["name"] == "id";))
+  | assert_true(id_field["type"]["required"])
+end
+
+def test_field_optional():
+  let fields = graphql_fields(_schema(), "User")
+  | let email_field = first(filter(fields, fn(f): f["name"] == "email";))
+  | assert_false(email_field["type"]["required"])
+end
+
+def test_field_list():
+  let fields = graphql_fields(_schema(), "User")
+  | let posts_field = first(filter(fields, fn(f): f["name"] == "posts";))
+  | assert_true(posts_field["type"]["list"])
+end
+
+def test_field_not_list():
+  let fields = graphql_fields(_schema(), "User")
+  | let id_field = first(filter(fields, fn(f): f["name"] == "id";))
+  | assert_false(id_field["type"]["list"])
+end
+
+def test_field_type_name():
+  let fields = graphql_fields(_schema(), "User")
+  | let name_field = first(filter(fields, fn(f): f["name"] == "name";))
+  | assert_eq(name_field["type"]["type"], "String")
+end
+
+# -- field arguments --
+
+def test_field_with_args():
+  let fields = graphql_fields(_schema(), "Query")
+  | let user_field = first(filter(fields, fn(f): f["name"] == "user";))
+  | assert_not_empty(user_field["args"])
+end
+
+def test_field_without_args():
+  let fields = graphql_fields(_schema(), "User")
+  | let id_field = first(filter(fields, fn(f): f["name"] == "id";))
+  | assert_empty(id_field["args"])
+end
+
+# -- comment stripping --
+
+def test_comments_stripped():
+  let schema = "# comment\ntype Foo {\n  # field comment\n  bar: String\n}"
+  | let fields = graphql_fields(schema, "Foo")
+  | assert_not_empty(fields)
+  | assert_eq(first(fields)["name"], "bar")
+end
